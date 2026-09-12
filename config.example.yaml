@@ -1,0 +1,17 @@
+# 复制为 config.yaml 后填入你的配置
+# 也可通过环境变量覆盖：
+#   DAILY_REPORT_BASE_URL / OPENAI_BASE_URL
+#   DAILY_REPORT_API_KEY  / OPENAI_API_KEY
+#   DAILY_REPORT_MODEL    / OPENAI_MODEL
+
+llm:
+  # OpenAI 兼容接口地址（末尾 /v1 可有可无）
+  base_url: "https://api.openai.com/v1"
+  api_key: "sk-your-key-here"
+  model: "gpt-4o-mini"
+  temperature: 0.3
+  timeout: 120
+
+storage:
+  # 相对路径相对于配置文件所在目录解析；也可写绝对路径
+  data_dir: "./data"
