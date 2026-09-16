@@ -142,6 +142,7 @@ class HubWindow(QWidget):
     open_tasks = Signal()
     open_games = Signal()
     open_settings = Signal()
+    open_search = Signal()
     toggle_floating = Signal()
     open_data_dir = Signal()
 
@@ -218,6 +219,9 @@ class HubWindow(QWidget):
         self.btn_settings = QPushButton("模型设置")
         self.btn_settings.setObjectName("Ghost")
         self.btn_settings.clicked.connect(self.open_settings.emit)
+        self.btn_search = QPushButton("全局搜索")
+        self.btn_search.setObjectName("Ghost")
+        self.btn_search.clicked.connect(self.open_search.emit)
         self.btn_data = QPushButton("打开数据目录")
         self.btn_data.setObjectName("Ghost")
         self.btn_data.clicked.connect(self.open_data_dir.emit)
@@ -230,6 +234,7 @@ class HubWindow(QWidget):
 
         foot.addWidget(self.btn_float)
         foot.addWidget(self.btn_settings)
+        foot.addWidget(self.btn_search)
         foot.addWidget(self.btn_data)
         foot.addStretch(1)
         foot.addWidget(model_hint)

@@ -63,12 +63,51 @@ class MainWindow(QMainWindow):
         self._compose_ctrl.failed.connect(self._on_compose_fail)
         self._compose_ctrl.status.connect(self._set_status)
 
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(20000)
+        self._autosave_timer.timeout.connect(self._autosave_draft)
+        self._autosave_timer.start()
+        self._dirty = False
+
         self._build_ui()
         self._build_menu()
         self.apply_mode()
         self._reload_list()
         self._load_report(self._current_date)
         self._set_status(f"数据目录: {self._store.data_dir}")
+        self.goal_edit.textChanged.connect(self._mark_dirty)
+        self.work_edit.textChanged.connect(self._mark_dirty)
+        self.next_edit.textChanged.connect(self._mark_dirty)
+
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+
+    def _autosave_draft(self) -> None:
+        if not self._dirty:
+            return
+        text_goal = self.goal_edit.toPlainText().strip()
+        text_work = self.work_edit.toPlainText().strip()
+        text_next = self.next_edit.toPlainText().strip()
+        if not (text_goal or text_work or text_next):
+            return
+        draft_dir = self._store.data_dir / "drafts"
+        draft_dir.mkdir(parents=True, exist_ok=True)
+        path = draft_dir / f"{self._current_date.isoformat()}.md"
+        try:
+            path.write_text(self._collect_report().to_markdown(), encoding="utf-8")
+            self._dirty = False
+            self._set_status(f"自动草稿已存 {path.name}")
+        except Exception:
+            pass
+
+    def _goto_date(self, d: date) -> None:
+        self._load_report(d)
+        self.tabs.setCurrentIndex(0)
+
+    def goto_date_external(self, d: date) -> None:
+        self.show()
+        self.raise_()
+        self._goto_date(d)
 
     # ---------- UI ----------
 
@@ -126,6 +165,11 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_editor_tab(), "今日工作")
         self.tabs.addTab(self._build_summary_tab(), "周报 / 月报")
         self.tabs.addTab(self._build_search_tab(), "关键词搜索")
+        from daily_report.gui.calendar_view import CalendarView
+
+        self.calendar_view = CalendarView(self._store)
+        self.calendar_view.open_date.connect(self._goto_date)
+        self.tabs.addTab(self.calendar_view, "日历")
         splitter.addWidget(self.tabs)
 
         splitter.setStretchFactor(0, 0)
@@ -177,7 +221,11 @@ class MainWindow(QMainWindow):
         log_del_row = QHBoxLayout()
         btn_del_log = QPushButton("删除选中流水")
         btn_del_log.clicked.connect(self._delete_selected_log)
+        btn_use_checked = QPushButton("仅用勾选流水成稿")
+        btn_use_checked.setObjectName("Ghost")
+        btn_use_checked.clicked.connect(lambda: self._run_compose(only_checked=True))
         log_del_row.addWidget(btn_del_log)
+        log_del_row.addWidget(btn_use_checked)
         log_del_row.addStretch(1)
         log_box.addLayout(log_del_row)
         lay.addLayout(log_box)
@@ -393,6 +441,8 @@ class MainWindow(QMainWindow):
         self._reload_list()
         self._load_report(self._current_date)
         self._update_summary_range()
+        if hasattr(self, "calendar_view"):
+            self.calendar_view.refresh()
         self._set_status(f"已重新加载 — {self._store.data_dir}")
 
     def _all_active_dates(self) -> list[date]:
@@ -443,10 +493,35 @@ class MainWindow(QMainWindow):
 
     def _load_logs_ui(self, d: date) -> None:
         self._logs_cache = self._store.load_logs(d)
+        self.log_list.blockSignals(True)
         self.log_list.clear()
         for e in self._logs_cache:
-            self.log_list.addItem(f"{e.time_str}  {e.text}")
+            item = QListWidgetItem(f"{e.time_str}  {e.text}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.log_list.addItem(item)
+        self.log_list.blockSignals(False)
         self.log_count_label.setText(f"{len(self._logs_cache)} 条")
+
+    def _checked_log_texts(self) -> list[str]:
+        out = []
+        for i in range(self.log_list.count()):
+            it = self.log_list.item(i)
+            if it.checkState() == Qt.CheckState.Checked:
+                t = it.text()
+                # 去掉时间前缀 "HH:MM  "
+                if len(t) > 6 and t[2] == ":":
+                    t = t[6:].strip()
+                out.append(t)
+        return out
+
+    def refresh_logs_if_needed(self, d: date | None = None) -> None:
+        """悬浮窗等外部写入流水后调用，立刻刷新当前打开的日期列表。"""
+        target = d or date.today()
+        if target == self._current_date:
+            self._load_logs_ui(self._current_date)
+        # 无论是否当天，都刷新左侧列表上的「流水N」标签
+        self._reload_list()
 
     # ---------- 随手记 ----------
 
@@ -566,10 +641,25 @@ class MainWindow(QMainWindow):
         out.write_text(text + "\n", encoding="utf-8")
         self._set_status(f"已保存手写总结: {out}")
 
-    def _run_compose(self) -> None:
+    def _run_compose(self, only_checked: bool = False) -> None:
         if not self._ensure_llm_ready():
             return
-        logs = self._store.load_logs(self._current_date)
+        from datetime import datetime as _dt
+
+        if only_checked:
+            texts = self._checked_log_texts()
+            logs = [
+                WorkLogEntry(timestamp=_dt.now(), text=t) for t in texts
+            ]
+            if not logs:
+                QMessageBox.information(
+                    self,
+                    "未勾选",
+                    "请先在流水列表勾选要纳入日报的条目。",
+                )
+                return
+        else:
+            logs = self._store.load_logs(self._current_date)
         if not logs and not self.goal_edit.toPlainText().strip():
             QMessageBox.information(
                 self,
@@ -846,6 +936,8 @@ class MainWindow(QMainWindow):
     def apply_config(self, cfg: Config) -> None:
         self._cfg = cfg
         self._store = ReportStore(cfg.data_dir)
+        if hasattr(self, "calendar_view"):
+            self.calendar_view.set_store(self._store)
         self.apply_mode()
         self._reload_all()
 

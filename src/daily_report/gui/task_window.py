@@ -207,6 +207,11 @@ class TaskWindow(QMainWindow):
 
     # ---------- 列表 ----------
 
+    def load_task_external(self, task_id: str) -> None:
+        self.show()
+        self.raise_()
+        self._load_task(task_id)
+
     def apply_config(self, cfg: Config) -> None:
         self._cfg = cfg
         self.btn_ai.setVisible(cfg.is_ai)

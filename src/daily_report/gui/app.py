@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
@@ -259,7 +260,85 @@ def main(argv: list[str] | None = None) -> int:
     daily.config_changed.connect(on_config_changed)
     float_log.open_main.connect(open_daily)
     float_log.open_bugs.connect(open_bugs)
-    float_log.logged.connect(lambda t: tray.notify("随手记", f"已记录：{t[:40]}"))
+    float_log.logged.connect(
+        lambda t: (
+            tray.notify("随手记", f"已记录：{t[:40]}"),
+            daily.refresh_logs_if_needed(),
+        )
+    )
+
+    def open_search() -> None:
+        from datetime import date as _d
+
+        from daily_report.gui.search_dialog import GlobalSearchDialog
+
+        dlg = GlobalSearchDialog(store, bug_store, task_store, hub)
+        dlg.open_daily.connect(lambda d: (open_daily(), daily.goto_date_external(d)))
+        dlg.open_bug.connect(lambda bid: (open_bugs(), bugs._load_bug(bid)))
+        dlg.open_task.connect(lambda tid: (open_tasks(), tasks.load_task_external(tid)))
+        dlg.exec()
+
+    hub.open_search.connect(open_search)
+    hub_open_search = open_search  # 菜单用
+
+    # 全局快捷键（Windows）
+    try:
+        from daily_report.gui.hotkeys import (
+            MOD_ALT,
+            MOD_CONTROL,
+            VK_B,
+            VK_M,
+            VK_S,
+            HotkeyManager,
+        )
+
+        hk = HotkeyManager()
+
+        def _hk_float() -> None:
+            def _do() -> None:
+                float_log.set_user_hidden(False)
+                float_log.show()
+                float_log.expand("log")
+                float_log.raise_()
+
+            QTimer.singleShot(0, _do)
+
+        def _hk_bug() -> None:
+            QTimer.singleShot(0, lambda: (
+                float_log.set_user_hidden(False),
+                float_log.show(),
+                float_log.expand("bug"),
+                float_log.raise_(),
+            ))
+
+        def _hk_search() -> None:
+            QTimer.singleShot(0, open_search)
+
+        hk.register(1, MOD_CONTROL | MOD_ALT, VK_M, _hk_float)
+        hk.register(2, MOD_CONTROL | MOD_ALT, VK_B, _hk_bug)
+        hk.register(3, MOD_CONTROL | MOD_ALT, VK_S, _hk_search)
+        tray.notify("快捷键", "Ctrl+Alt+M 悬浮窗 · Ctrl+Alt+B 记Bug · Ctrl+Alt+S 搜索")
+    except Exception:
+        hk = None
+
+    # 定时提醒：有流水未写日报
+    def remind_daily() -> None:
+        from datetime import date as _d
+
+        today = _d.today()
+        logs = store.load_logs(today)
+        has_report = store.exists(today)
+        if logs and not has_report:
+            tray.notify(
+                "日报提醒",
+                f"今天已有 {len(logs)} 条流水，还没有正式日报，记得成稿。",
+            )
+
+    remind_timer = QTimer()
+    remind_timer.setInterval(60 * 60 * 1000)  # 每小时
+    remind_timer.timeout.connect(remind_daily)
+    remind_timer.start()
+    QTimer.singleShot(5000, remind_daily)
     float_log.bug_saved.connect(
         lambda s: (
             tray.notify("Bug 列表", f"已记录：{s[:40]}"),
